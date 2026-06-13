@@ -8,7 +8,7 @@ def current_A(q, p):
     return  p  # J = 
 
 def dHdq(q, p):
-    return np.sin(q)  # potential energy gradient
+    return 0  # potential energy gradient
 def dHdp(q, p):
     return p  # kinetic energy gradient
 
@@ -18,7 +18,7 @@ k_B = 1.0  # Boltzmann constant (dimensionless in k_B*T scaling)
 T = 1.0    # Temperature (dimensionless in k_B*T scaling)
 
 # Physical parameters
-gamma = 0.5  # Friction coefficient (scaled appropriately)
+gamma = 2  # Friction coefficient (scaled appropriately)
 period = 2 * np.pi  # Period for periodic boundary conditions
 dt = 0.01  # Time step (in appropriate units)
 
@@ -33,8 +33,8 @@ def sample_initial_conditions(num_samples):
     print(f"Equilibration completed for {num_samples} samples.")
     return q_tempo, p_tempo
 
-num_steps = 5000  # Number of steps to simulate
-num_samples = 30000  # Number of samples for correlation
+num_steps = 4000  # Number of steps to simulate
+num_samples = 40000  # Number of samples for correlation
 system = PeriodicLangevinSystem(dHdq, dHdp, gamma=gamma, k_B=k_B, T=T, period=period)
 q0, p0 = sample_initial_conditions(num_samples)  
 
