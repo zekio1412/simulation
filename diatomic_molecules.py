@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from Langevin import DiatomicMolecules3D
 from tqdm import trange
 from numba import njit, prange
-from analysis import calculate_rdf_3d, calculate_vacf_numba_3d, animate_3d_particles, animate_particles_colored
+from analysis import calculate_rdf_3d, calculate_vacf_numba_3d, animate_3d_particles, animate_particles_colored_with_bonds
 
 
 
@@ -209,4 +209,4 @@ plt.grid(True)
 plt.legend()
 plt.show()
 
-ani = animate_particles_colored(q_history[::50], sim.charges, num_particles, box_size, dt, interval=30)
+ani = animate_particles_colored_with_bonds(q_history[::50], sim.charges, num_particles, box_size, dt, interval=30)

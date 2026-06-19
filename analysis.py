@@ -327,3 +327,80 @@ def animate_particles_colored(q_history, charges, num_particles, box_size, dt, i
     plt.show()
     return ani
 
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
+def animate_particles_colored_with_bonds(q_history, charges, num_particles, box_size, dt, interval=50):
+    """
+    charges: 各粒子の電荷が入った配列 (+1.0 または -1.0)
+    """
+    fig = plt.figure(figsize=(8, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # ここではご提示いただいた範囲 (-2 から 2) に設定
+    ax.set_xlim(-2, 2)
+    ax.set_ylim(-2, 2)
+    ax.set_zlim(-2, 2)
+    
+    q_0 = q_history[0].reshape((num_particles, 3))
+    
+    # 1. 散布図（粒子）のプロット
+    scat = ax.scatter(q_0[:, 0], q_0[:, 1], q_0[:, 2], 
+                      s=15, c=charges, cmap='bwr', vmin=-1.0, vmax=1.0, alpha=1.0)
+
+    # 2. 結合線のプロットオブジェクト（初期値は空）
+    # linewidth で線の太さ、alpha で透明度を調整できます
+    bond_lines, = ax.plot([], [], [], color='black', alpha=0.6, linewidth=1.5, linestyle='--')
+
+    def get_bond_coords(q_frame):
+        """偶数インデックスと奇数インデックスの粒子を繋ぐ線の座標を生成する"""
+        p1 = q_frame[0::2]  # 粒子0, 2, 4...
+        p2 = q_frame[1::2]  # 粒子1, 3, 5...
+        
+        # 周期境界をまたぐペアを検知（距離が box_size/2 よりも大きい場合）
+        # これをやらないと、箱の右端と左端を繋ぐ長い線が描画されてしまいます
+        cross_pbc = np.any(np.abs(p1 - p2) > box_size / 2.0, axis=1)
+        
+        # 線を途切れさせるための NaN 配列
+        nans = np.full((len(p1), 3), np.nan)
+        
+        # [p1_x, p2_x, NaN, p1_x, p2_x, NaN...] のように結合
+        segments = np.empty((len(p1) * 3, 3))
+        segments[0::3] = p1
+        segments[1::3] = p2
+        segments[2::3] = nans
+        
+        # 周期境界をまたいでいるペアは、線を引かない（NaNにする）
+        segments[0::3][cross_pbc] = np.nan
+        segments[1::3][cross_pbc] = np.nan
+        
+        return segments[:, 0], segments[:, 1], segments[:, 2]
+
+    def update(frame):
+        t = frame * dt * 50  # 間引き率に合わせる
+        
+        q_frame = q_history[frame].reshape((num_particles, 3))
+        
+        # 散布図の更新
+        scat._offsets3d = (q_frame[:, 0], q_frame[:, 1], q_frame[:, 2])
+        
+        # 結合線の更新
+        xs, ys, zs = get_bond_coords(q_frame)
+        bond_lines.set_data_3d(xs, ys, zs)
+        
+        ax.set_title(f"Time $t = {t:.2f}$ (Red: +, Blue: -)")
+        
+        # 複数のオブジェクトを更新した場合は両方返す
+        return scat, bond_lines
+
+    ani = animation.FuncAnimation(
+        fig, update, frames=len(q_history), interval=interval, blit=False
+    )
+    
+    plt.show()
+    return ani
+
+# 実行時の呼び出し方
+# ani = animate_particles_colored_with_bonds(q_history[::50], sim.charges, num_particles, box_size, dt, interval=30)
+
