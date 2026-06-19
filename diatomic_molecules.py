@@ -1,65 +1,117 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from Langevin import InteractingParticles2D
+from Langevin import DiatomicMolecules3D
 from tqdm import trange
 from numba import njit, prange
-from analysis import calculate_rdf_2d, calculate_vacf_numba_2d
+from analysis import calculate_rdf_3d, calculate_vacf_numba_3d, animate_3d_particles, animate_particles_colored
 
+
+
+import numpy as np
+from tqdm import trange
 
 # --- 1. シミュレーションの設定 ---
-num_particles = 4096
-box_size = 400
+num_particles = 1000
+num_molecules = num_particles // 2  # 分子の数は粒子の半分 (500個)
+box_size = 15
 gamma = 0.5
-dt = 0.005
-equilibration_steps = 1000  # 空回し（熱平衡化）
-production_steps = 1000     # 測定ステップ
+dt = 0.001
+equilibration_steps = 1000  
+production_steps = 10000     
 
-# インスタンスの作成
-sim = InteractingParticles2D(
+# 分子の設定パラメータ
+r0_bond = 1.0  # バネの自然長（この距離でペアを初期配置します）
+T_target = 0.5
+
+# --- 電荷の設定（極性分子モデルの作成） ---
+# ランダムにシャッフルするのではなく、分子内のペアで電荷を分けるのが自然です。
+# 例：ペアの片方(偶数インデックス)を +1.0、もう片方(奇数インデックス)を -1.0 とする
+charges = np.zeros(num_particles, dtype=np.float64)
+charges[0::2] = 1.0   # 粒子0, 2, 4... は正電荷
+charges[1::2] = -1.0  # 粒子1, 3, 5... は負電荷
+
+# インスタンスの作成 
+# ※DiatomicMolecules3Dクラスが charges を受け取り、
+# クーロン力も計算できるように先ほどのコードをマージしていることを前提とします。
+sim = DiatomicMolecules3D(
     num_particles=num_particles, 
     box_size=box_size, 
     gamma=gamma, 
+    charges=charges,
     epsilon=1.0, 
     sigma=1.0, 
-    T=0
+    T=T_target,
+    k_bond=500.0,
+    r0_bond=r0_bond
 )
 
-# --- 2. 初期状態の設定 ---
-grid_dim = int(np.ceil(np.sqrt(num_particles)))
-x = np.linspace(-box_size/3, box_size/3, grid_dim)
-y = np.linspace(-box_size/3, box_size/3, grid_dim)
-X, Y = np.meshgrid(x, y)
-q = np.stack([X.flatten(), Y.flatten()], axis=1)[:num_particles].flatten()
-p = np.random.normal(0, np.sqrt(sim.mass * sim.T), size=2 * num_particles)
+# --- 2. 初期状態の設定 (二原子分子用) ---
+print("Setting up initial positions for diatomic molecules...")
+
+# 1. まず「分子の重心」を配置するためのグリッドを作成
+grid_dim = int(np.ceil(num_molecules ** (1/3)))
+spacing = box_size / grid_dim  # グリッドの間隔
+
+# 壁に近すぎないように配置空間を少し絞る
+x = np.linspace(-box_size/2 + spacing/2, box_size/2 - spacing/2, grid_dim)
+y = np.linspace(-box_size/2 + spacing/2, box_size/2 - spacing/2, grid_dim)
+z = np.linspace(-box_size/2 + spacing/2, box_size/2 - spacing/2, grid_dim)
+
+X, Y, Z = np.meshgrid(x, y, z)
+# num_molecules 分の重心座標を取得
+molecule_centers = np.stack([X.flatten(), Y.flatten(), Z.flatten()], axis=1)[:num_molecules]
+
+# 2. 重心の位置を基準に、ペアとなる2つの粒子を配置
+q_initial = np.zeros((num_particles, 3))
+
+for i in range(num_molecules):
+    center = molecule_centers[i]
+    
+    # 粒子1 (偶数インデックス): 中心からx軸マイナス方向へ自然長の半分ずらす
+    q_initial[2*i]     = center + np.array([-r0_bond / 2.0, 0.0, 0.0])
+    
+    # 粒子2 (奇数インデックス): 中心からx軸プラス方向へ自然長の半分ずらす
+    q_initial[2*i + 1] = center + np.array([r0_bond / 2.0, 0.0, 0.0])
+
+# 1次元配列に平坦化
+q = q_initial.flatten()
+
+# 3. 運動量の初期化
+p = np.random.normal(0, np.sqrt(sim.mass * sim.T), size=3 * num_particles)
+
+
 
 print("Starting equilibration...")
 for step in trange(equilibration_steps):
     q, p = sim.step(q, p, dt)
 print("Equilibration complete.")
 
-# --- 3. 基準時刻 (t=0) のデータの取得 ---
-p_0 = p.copy().reshape((num_particles, 2))
+p_history = []
+q_history = []
 
+
+
+# --- 3. 基準時刻 (t=0) のデータの取得 ---
+p_0 = p.copy().reshape((num_particles, 3))
 
 
 # --- 修正版：相関関数の計算（時間平均をとる手法） ---
 
 print("Starting production (saving data)...")
-p_history = []
-q_history = []
 for step in trange(production_steps):
-    p_current = p.reshape((num_particles, 2))
+    p_current = p.reshape((num_particles, 3))
     p_history.append(p_current.copy())
     q_history.append(q.copy())
     q, p = sim.step(q, p, dt)
 
+
 """
 print("Calculating time-averaged correlations...")
 
-# 配列化: shape = (時間ステップ数, 粒子数, 2)
+# 配列化: shape = (時間ステップ数, 粒子数, 3)
 p_array = np.array(p_history)
 max_lag = int(production_steps * 0.5)  
-norm_indiv, norm_total = calculate_vacf_numba(p_array, max_lag)
+norm_indiv, norm_total = calculate_vacf_numba_3d(p_array, max_lag)
 
 
 
@@ -96,10 +148,11 @@ plt.tight_layout()
 plt.show()
 """
 
+
 print("Calculating Radial Distribution Function g(r)...")
 # q_history: 測定フェーズで保存した位置座標のリスト
 # dr=0.02 程度にするとより解像度の高い綺麗な山が見られます
-r, g_r = calculate_rdf_2d(q_history, box_size, num_particles, dr=0.02)
+r, g_r = calculate_rdf_3d(q_history, box_size, num_particles, dr=0.02)
 
 # グラフ描画
 plt.figure(figsize=(7, 5))
@@ -140,7 +193,7 @@ def calculate_sq(r, g_r, rho, q_range=(0.1, 15), num_q=100):
 
 # --- 実行 ---
 # 密度 rho を計算（calculate_rdf内での定義と同じ値）
-rho = num_particles / (box_size ** 2)
+rho = num_particles / (box_size ** 3)
 
 # S(q) を計算
 q, s_q = calculate_sq(r, g_r, rho)
@@ -155,3 +208,5 @@ plt.title('Static Structure Factor from RDF', fontsize=14)
 plt.grid(True)
 plt.legend()
 plt.show()
+
+ani = animate_particles_colored(q_history[::50], sim.charges, num_particles, box_size, dt, interval=30)

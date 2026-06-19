@@ -1,65 +1,80 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from Langevin import InteractingParticles2D
+from Langevin import CoulombParticles3D
 from tqdm import trange
 from numba import njit, prange
-from analysis import calculate_rdf_2d, calculate_vacf_numba_2d
+from analysis import calculate_rdf_3d, calculate_vacf_numba_3d, animate_3d_particles, animate_particles_colored
+
 
 
 # --- 1. シミュレーションの設定 ---
-num_particles = 4096
-box_size = 400
+num_particles = 1000
+box_size = 100
 gamma = 0.5
-dt = 0.005
-equilibration_steps = 1000  # 空回し（熱平衡化）
-production_steps = 1000     # 測定ステップ
+dt = 0.001
+equilibration_steps = 10000  # 空回し（熱平衡化）
+production_steps = 10000     # 測定ステップ
+
+# クラスの__init__内、または初期位置設定時に以下を追加
+# 粒子の2/3を +1.0 (正電、種別0)、残り1/3を -2.0 (負電、種別1) にする
+charges = np.ones(num_particles, dtype=np.float64)
+charges[num_particles // 3:] = -2.0
+
+# ランダムにシャッフルして、空間に均一に混ざるようにする
+np.random.shuffle(charges)
 
 # インスタンスの作成
-sim = InteractingParticles2D(
+sim = CoulombParticles3D(
     num_particles=num_particles, 
     box_size=box_size, 
     gamma=gamma, 
+    charges=charges,  # 粒子ごとの電荷を設定
     epsilon=1.0, 
     sigma=1.0, 
-    T=0
+    T=0.5
 )
 
 # --- 2. 初期状態の設定 ---
-grid_dim = int(np.ceil(np.sqrt(num_particles)))
-x = np.linspace(-box_size/3, box_size/3, grid_dim)
-y = np.linspace(-box_size/3, box_size/3, grid_dim)
-X, Y = np.meshgrid(x, y)
-q = np.stack([X.flatten(), Y.flatten()], axis=1)[:num_particles].flatten()
-p = np.random.normal(0, np.sqrt(sim.mass * sim.T), size=2 * num_particles)
+grid_dim = int(np.ceil(num_particles ** (1/3)))
+x = np.linspace(-box_size/2.1, box_size/2.1, grid_dim)
+y = np.linspace(-box_size/2.1, box_size/2.1, grid_dim)
+z = np.linspace(-box_size/2.1, box_size/2.1, grid_dim)
+
+X, Y, Z = np.meshgrid(x, y, z)
+q = np.stack([X.flatten(), Y.flatten(), Z.flatten()], axis=1)[:num_particles].flatten()
+p = np.random.normal(0, np.sqrt(sim.mass * sim.T), size=3 * num_particles)
 
 print("Starting equilibration...")
 for step in trange(equilibration_steps):
     q, p = sim.step(q, p, dt)
 print("Equilibration complete.")
 
-# --- 3. 基準時刻 (t=0) のデータの取得 ---
-p_0 = p.copy().reshape((num_particles, 2))
+p_history = []
+q_history = []
 
+
+
+# --- 3. 基準時刻 (t=0) のデータの取得 ---
+p_0 = p.copy().reshape((num_particles, 3))
 
 
 # --- 修正版：相関関数の計算（時間平均をとる手法） ---
 
 print("Starting production (saving data)...")
-p_history = []
-q_history = []
 for step in trange(production_steps):
-    p_current = p.reshape((num_particles, 2))
+    p_current = p.reshape((num_particles, 3))
     p_history.append(p_current.copy())
     q_history.append(q.copy())
     q, p = sim.step(q, p, dt)
 
+
 """
 print("Calculating time-averaged correlations...")
 
-# 配列化: shape = (時間ステップ数, 粒子数, 2)
+# 配列化: shape = (時間ステップ数, 粒子数, 3)
 p_array = np.array(p_history)
 max_lag = int(production_steps * 0.5)  
-norm_indiv, norm_total = calculate_vacf_numba(p_array, max_lag)
+norm_indiv, norm_total = calculate_vacf_numba_3d(p_array, max_lag)
 
 
 
@@ -96,10 +111,11 @@ plt.tight_layout()
 plt.show()
 """
 
+
 print("Calculating Radial Distribution Function g(r)...")
 # q_history: 測定フェーズで保存した位置座標のリスト
 # dr=0.02 程度にするとより解像度の高い綺麗な山が見られます
-r, g_r = calculate_rdf_2d(q_history, box_size, num_particles, dr=0.02)
+r, g_r = calculate_rdf_3d(q_history, box_size, num_particles, dr=0.02)
 
 # グラフ描画
 plt.figure(figsize=(7, 5))
@@ -140,7 +156,7 @@ def calculate_sq(r, g_r, rho, q_range=(0.1, 15), num_q=100):
 
 # --- 実行 ---
 # 密度 rho を計算（calculate_rdf内での定義と同じ値）
-rho = num_particles / (box_size ** 2)
+rho = num_particles / (box_size ** 3)
 
 # S(q) を計算
 q, s_q = calculate_sq(r, g_r, rho)
@@ -155,3 +171,5 @@ plt.title('Static Structure Factor from RDF', fontsize=14)
 plt.grid(True)
 plt.legend()
 plt.show()
+
+ani = animate_particles_colored(q_history[::50], sim.charges, num_particles, box_size, dt, interval=30)
